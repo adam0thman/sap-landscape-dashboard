@@ -77,12 +77,22 @@ Feeds the 6-hour availability chart and the `RESP` card metric.
 | `response_ms` | int | latency in ms (0 when down) |
 | `env` | text | |
 
-### 5. `sld_systems` — inventory (1 row per system, upsert)
+### 5. `sld_systems` — inventory (1 row per system instance, upsert)
 Static facts about each system (from an SAP SLD push or entered by hand). Drives
 the hero line and the **Landscape / Inventory** pane. See columns in
 [`schema.sql`](../db/schema.sql). Two columns are **JSON stored as text**:
 - `components` → `[{"name":"SAP_BASIS","version":"756"}, …]`
 - `appserver_list` → `[{"inst":"…","nr":"00","host":"…"}]`
+
+**Identity = `(sid, system_home)`, not `sid` alone.** A system and its copy/POC
+share a SID but live on different hosts (`system_home`), so keying on SID alone
+would make them overwrite each other. `install_no` (installation number) and
+`source_ip` (who pushed) are also recorded — note an installation number can be
+*identical* on a copy, which is why the host is the real disambiguator. The
+capture-first ingest (`collector/sld_ingest.py`) archives every raw push, only
+upserts known payload types, and supports an optional allowlist
+(`SLD_ALLOW_FILE`, lines of `SID` or `SID@host`) so stray/garbage senders are
+captured-only, never stored.
 
 ### 6. `backups` — optional backup monitoring
 Latest row per `(sid, backup_type)`. Safe to leave empty.

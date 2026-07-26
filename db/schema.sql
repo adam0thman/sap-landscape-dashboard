@@ -80,7 +80,10 @@ COMMENT ON TABLE uptime IS 'Reachability + latency time series; source of the 6h
 -- Landscape/Inventory pane. Not time series — it's the current facts.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS sld_systems (
-    sid            text PRIMARY KEY,
+    sid            text NOT NULL,          -- SAP System ID
+    system_home    text NOT NULL DEFAULT '', -- central/message-server host; disambiguates same-SID copies
+    install_no     text,                   -- installation/license number (may be identical on a copy)
+    source_ip      text,                   -- IP that pushed this payload (audit)
     sys_release    text,         -- e.g. '756'
     sys_number     text,
     db_schema      text,         -- e.g. 'SAPHANADB' / 'SAPSR3'
@@ -102,9 +105,10 @@ CREATE TABLE IF NOT EXISTS sld_systems (
     clients        integer,
     components     text,         -- JSON array: [{"name":"SAP_BASIS","version":"756"}, ...]
     appserver_list text,         -- JSON array: [{"inst":"...","nr":"00","host":"..."}]
-    updated        timestamptz DEFAULT now()
+    updated        timestamptz DEFAULT now(),
+    PRIMARY KEY (sid, system_home)   -- identity = SID + host, so a system and its copy/POC don't collide
 );
-COMMENT ON TABLE sld_systems IS 'Per-system landscape inventory (release, DB, RAM, components...). components/appserver_list are JSON text.';
+COMMENT ON TABLE sld_systems IS 'Per-system landscape inventory (release, DB, RAM, components...). Keyed (sid, system_home). components/appserver_list are JSON text.';
 
 -- ---------------------------------------------------------------------------
 -- backups — optional backup-monitoring rows (latest per sid/backup_type).

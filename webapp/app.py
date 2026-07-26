@@ -130,7 +130,14 @@ def system_detail(sid):
             lists.setdefault(r["check_name"], []).append(r["item"])
         sld = None
         try:
-            cur.execute("SELECT * FROM sld_systems WHERE sid=%s", (sid,))
+            # sld_systems is keyed (sid, system_home): a SID may have >1 row
+            # (e.g. prod + its copy/POC). Prefer the one whose host matches this
+            # monitored system, else the most recently updated.
+            cur.execute("""SELECT sl.* FROM sld_systems sl
+                           WHERE sl.sid=%s
+                           ORDER BY (sl.system_home = (SELECT host FROM systems WHERE sid=%s)) DESC NULLS LAST,
+                                    sl.updated DESC
+                           LIMIT 1""", (sid, sid))
             sld = cur.fetchone()
         except Exception:
             c.rollback()

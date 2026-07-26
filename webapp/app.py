@@ -203,6 +203,28 @@ def ping(sid):
         return {"up": 0, "ms": None, "port": port}
 
 
+def hosts():
+    """All host-inventory rows (SAP Host Agent). Flags bare-metal + whether the
+    host backs a monitored system."""
+    with db() as c, c.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("""SELECT h.*,
+                         EXISTS(SELECT 1 FROM systems s
+                                WHERE s.host IN (h.ip, h.host, h.fqdn)) AS monitored
+                       FROM sld_hosts h
+                       ORDER BY h.ram_mb DESC NULLS LAST, h.host""")
+        rows = cur.fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        vi = (d.get("virt_info") or "").strip()
+        d["baremetal"] = vi.lower() in ("", "none")
+        d["platform"] = "bare-metal" if d["baremetal"] else vi
+        if d.get("updated"):
+            d["updated"] = d["updated"].isoformat()
+        out.append(d)
+    return {"hosts": out}
+
+
 HTML = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>BFI · SAP Landscape Operations</title>
@@ -217,6 +239,28 @@ header{display:flex;align-items:center;gap:14px;padding:14px 22px;
 .bolt{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;background:linear-gradient(135deg,#f2b705,#ff7a00);color:#111;font-size:17px;font-weight:800}
 .brand b{font-weight:700;font-size:15px}.brand span{color:var(--dim);font-size:12.5px;margin-left:10px}
 .spacer{flex:1}
+.vtabs{display:flex;gap:2px;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:3px}
+.vt{background:transparent;border:0;color:var(--dim);font-size:12.5px;padding:6px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-family:inherit}
+.vt.active{background:var(--panel2);color:var(--txt)}
+.hidden{display:none!important}
+#hostsview{padding:16px 22px 40px}
+.hosts-h{display:flex;align-items:baseline;gap:12px;margin-bottom:14px}
+.hosts-h .t{font-size:12px;letter-spacing:1.5px;color:var(--dim);font-weight:600}
+.hosts-h .sub{color:var(--faint);font-size:12px}
+.hgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:14px}
+.hcard{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--blue);border-radius:12px;padding:15px 17px}
+.hcard.bare{border-left-color:var(--amber)}
+.hcard .htop{display:flex;align-items:center;gap:10px}
+.hcard .hname{font-family:var(--mono);font-size:16px;font-weight:700}
+.hbadge{margin-left:auto;font-size:9.5px;font-weight:700;letter-spacing:.5px;padding:3px 7px;border-radius:5px}
+.hbadge.bm{background:rgba(255,152,48,.16);color:#ffb266}
+.hbadge.vm{background:rgba(59,130,246,.16);color:#7fb0ff}
+.hcard .hsub{color:var(--faint);font-size:11.5px;font-family:var(--mono);margin:6px 0 12px}
+.hcard .mon{color:var(--green)}
+.hcard .hmrow{display:flex;gap:8px;text-align:center;border-top:1px solid var(--line);padding-top:11px}
+.hcard .hm{flex:1}.hcard .hm b{font-family:var(--mono);font-size:16px;font-weight:700;display:block}
+.hcard .hm span{color:var(--faint);font-size:9.5px;letter-spacing:.5px}
+.hcard .hfoot{color:var(--dim);font-size:11px;font-family:var(--mono);margin-top:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pill{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 12px;color:var(--dim);font-size:12.5px;display:flex;align-items:center;gap:7px}
 select.pill{color:var(--txt);cursor:pointer}
 .dotpulse{width:7px;height:7px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
@@ -301,11 +345,13 @@ tr:last-child td{border-bottom:none}td.k{color:var(--txt)}
 <header>
   <div class="bolt">⚡</div>
   <div class="brand"><b>SAP Landscape Operations</b><span>Basis Monitoring · BFI</span></div>
+  <div class="vtabs"><button id="tabSys" class="vt active" onclick="showView('sys')">Systems</button><button id="tabHosts" class="vt" onclick="showView('hosts')">Hosts</button></div>
   <div class="spacer"></div>
   <select id="envf" class="pill"><option value="">All environments</option>
     <option value="D">Development</option><option value="Q">Quality/QA</option><option value="P">Production</option></select>
   <div class="pill"><span class="dotpulse"></span><span id="clock">live · 30s</span></div>
 </header>
+<div id="sysview">
 <div class="strip-h"><span class="t">SYSTEM LANDSCAPE</span><span class="sub" id="stripcount"></span>
   <div class="legend">
     <span><i class="d-red"></i>Critical <b id="lc-red">0</b></span>
@@ -313,6 +359,8 @@ tr:last-child td{border-bottom:none}td.k{color:var(--txt)}
     <span><i class="d-green"></i>Healthy <b id="lc-green">0</b></span></div></div>
 <div class="strip" id="strip"></div>
 <div class="detail" id="detail"></div>
+</div>
+<div id="hostsview" class="hidden"></div>
 <script>
 const $=(s,e=document)=>e.querySelector(s);
 const H=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -556,6 +604,34 @@ async function select(sid){
   drawTrend(d.trend);
   startLive(sid);
 }
+function showView(v){
+  const sys=v==='sys';
+  $('#sysview').classList.toggle('hidden',!sys);
+  $('#hostsview').classList.toggle('hidden',sys);
+  $('#tabSys').classList.toggle('active',sys);
+  $('#tabHosts').classList.toggle('active',!sys);
+  if(!sys)loadHosts();
+}
+async function loadHosts(){
+  const d=await(await fetch('/api/hosts')).json();
+  const cards=d.hosts.map(h=>{
+    const gb=h.ram_mb?Math.round(h.ram_mb/1024)+' GB':'—';
+    const ghz=h.cpu_rate?(h.cpu_rate/1000).toFixed(1)+' GHz':'—';
+    const cpu=h.cpu_type?H(h.cpu_type.replace('Intel(R) Xeon(R) ','Xeon ').replace(/ CPU @.*/,'')):'';
+    return `<div class="hcard ${h.baremetal?'bare':''}">
+      <div class="htop"><span class="hname">${H(h.host)}</span><span class="hbadge ${h.baremetal?'bm':'vm'}">${h.baremetal?'BARE-METAL':'VM'}</span></div>
+      <div class="hsub">${H(h.ip||'')}${h.monitored?' · <span class="mon">● monitored</span>':''}</div>
+      <div class="hmrow"><div class="hm"><b>${h.cpu_count==null?'—':h.cpu_count}</b><span>CPUs</span></div>
+        <div class="hm"><b>${gb}</b><span>RAM</span></div><div class="hm"><b>${ghz}</b><span>CLOCK</span></div></div>
+      <div class="hfoot">${cpu}</div>
+      <div class="hfoot">${H(h.os_release||'')} · ${H(h.os_kernel||'')}</div>
+      ${h.baremetal?'':`<div class="hfoot">${H(h.platform||'')}</div>`}
+    </div>`;}).join('');
+  const bm=d.hosts.filter(h=>h.baremetal).length;
+  $('#hostsview').innerHTML=`<div class="hosts-h"><span class="t">INFRASTRUCTURE · HOSTS</span>
+    <span class="sub">${d.hosts.length} hosts · ${bm} bare-metal · via SAP Host Agent</span></div>
+    <div class="hgrid">${cards||'<div class="empty">No host data yet — run sldreg on a host to populate.</div>'}</div>`;
+}
 async function load(){OV=await(await fetch('/api/overview')).json();renderStrip();}
 $('#envf').onchange=renderStrip;
 load();setInterval(load,30000);
@@ -580,6 +656,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, b'{"ok":true}', "application/json")
             if p == "/api/overview":
                 return self._send(200, json.dumps(overview()).encode(), "application/json")
+            if p == "/api/hosts":
+                return self._send(200, json.dumps(hosts()).encode(), "application/json")
             if p.startswith("/api/system/"):
                 d = system_detail(p.rsplit("/", 1)[-1][:8].upper())
                 if d is None:

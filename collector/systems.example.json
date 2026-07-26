@@ -1,0 +1,10 @@
+{ "rfc_user": "DDIC",
+  "systems": [
+    {"sid":"EAD","env":"D","type":"ABAP","host":"app-ead-01.example.corp","sysnr":"00","client":"100","descr":"S/4HANA Dev"},
+    {"sid":"EAQ","env":"Q","type":"ABAP","host":"app-eaq-01.example.corp","sysnr":"01","client":"100","descr":"S/4HANA QA"},
+    {"sid":"EAP","env":"P","type":"ABAP","host":"app-eap-01.example.corp","sysnr":"02","client":"100","descr":"S/4HANA Production"},
+    {"sid":"BID","env":"D","type":"ABAP","host":"app-bid-01.example.corp","sysnr":"20","client":"001","descr":"BW/4HANA Dev"},
+    {"sid":"PIP","env":"P","type":"JAVA","host":"app-pip-01.example.corp","port":50000,"descr":"Process Integration (Prod, Java)"},
+    {"sid":"SMP","env":"P","type":"ABAP","host":"app-smp-01.example.corp","sysnr":"50","client":"001","descr":"Solution Manager (Prod)"}
+  ]
+}

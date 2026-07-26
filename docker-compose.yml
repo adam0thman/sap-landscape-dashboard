@@ -1,0 +1,46 @@
+# Self-contained demo stack: postgres (schema + demo data auto-loaded) + webapp + nginx.
+#   docker compose up -d   →   open http://localhost:8080
+name: sap-dashboard
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${PGUSER:-dashboard}
+      POSTGRES_DB: ${PGDATABASE:-sapmon}
+      POSTGRES_PASSWORD: ${PGPASSWORD:-dashboard}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # *.sql in initdb.d run once, in order, on an empty data dir:
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./db/seed_demo.sql:/docker-entrypoint-initdb.d/02-seed_demo.sql:ro
+    ports: ["127.0.0.1:5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PGUSER:-dashboard} -d ${PGDATABASE:-sapmon}"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  webapp:
+    build: ./webapp
+    environment:
+      PGHOST: postgres
+      PGDATABASE: ${PGDATABASE:-sapmon}
+      PGUSER: ${PGUSER:-dashboard}
+      PGPASSWORD: ${PGPASSWORD:-dashboard}
+      SYSTEMS_JSON: /etc/sapmon/systems.json   # live-ping probe targets (host/port per SID)
+    volumes:
+      - ./collector/systems.example.json:/etc/sapmon/systems.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports: ["8080:80"]
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on: [webapp]
+
+volumes:
+  pgdata:

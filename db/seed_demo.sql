@@ -9,7 +9,7 @@
 BEGIN;
 
 DELETE FROM jco_details; DELETE FROM jco_results; DELETE FROM uptime;
-DELETE FROM sld_systems; DELETE FROM backups; DELETE FROM systems;
+DELETE FROM sld_hosts; DELETE FROM sld_systems; DELETE FROM backups; DELETE FROM systems;
 
 -- ---- registry (6 systems across Dev/QA/Prod) -------------------------------
 INSERT INTO systems (sid, env, stype, host, sysnr, client, descr) VALUES
@@ -108,6 +108,25 @@ INSERT INTO sld_systems
   '[{"name":"SAP_BASIS","version":"740"},{"name":"ST","version":"720"},{"name":"ST-PI","version":"740"}]',
   '[{"inst":"app-smp-01_SMP_50","nr":"50","host":"app-smp-01.example.corp"}]');
 
+-- ---- host inventory (SAP Host Agent, ComputerSystem) -----------------------
+-- app hosts match the systems above; db-eap-01 is a standalone (bare-metal) DB
+-- host with NO ABAP system — shows Host Agent coverage where RZ70 can't reach.
+INSERT INTO sld_hosts
+ (host,fqdn,ip,cpu_type,cpu_count,cpu_rate,ram_mb,vram_mb,os,os_release,os_kernel,os_bits,
+  manufacturer,machine_type,virt_info,hardware_id,status,source_ip) VALUES
+ ('app-eap-01','app-eap-01.example.corp','10.20.30.11','Intel(R) Xeon(R) Gold 6338 CPU @ 2.00GHz',8,2000,262144,131072,
+  'LINUX_X86_64','SUSE Linux Enterprise Server 15 SP4','5.14.21-150400-default',64,'VMware, Inc.','VMware7,1',
+  'VMware ESX 7.0.3 build-20000000','HW-EAP-0001','OK','10.20.30.11'),
+ ('app-ead-01','app-ead-01.example.corp','10.20.10.11','Intel(R) Xeon(R) Gold 6338 CPU @ 2.00GHz',4,2000,131072,65536,
+  'LINUX_X86_64','SUSE Linux Enterprise Server 15 SP4','5.14.21-150400-default',64,'VMware, Inc.','VMware7,1',
+  'VMware ESX 7.0.3 build-20000000','HW-EAD-0001','OK','10.20.10.11'),
+ ('app-smp-01','app-smp-01.example.corp','10.20.30.50','Intel(R) Xeon(R) Gold 6238R CPU @ 2.20GHz',4,2200,65536,32768,
+  'LINUX_X86_64','SUSE Linux Enterprise Server 15 SP3','5.3.18-150300-default',64,'VMware, Inc.','VMware7,1',
+  'VMware ESX 7.0.3 build-20000000','HW-SMP-0001','OK','10.20.30.50'),
+ ('db-eap-01','db-eap-01.example.corp','10.20.30.12','Intel(R) Xeon(R) Platinum 8360Y CPU @ 2.40GHz',16,2400,524288,262144,
+  'LINUX_X86_64','SUSE Linux Enterprise Server for SAP 15 SP4','5.14.21-150400-default',64,'Dell Inc.','PowerEdge R750',
+  'bare-metal','HW-DBEAP-01','OK','10.20.30.12');
+
 -- ---- backups ---------------------------------------------------------------
 INSERT INTO backups (sid, db_type, backup_type, status, size_bytes, oldest_kept, path) VALUES
  ('EAP','HDB','FULL',0, 486539264000, now() - interval '14 days','/hana/backup/EAP/full'),
@@ -139,4 +158,5 @@ UNION ALL SELECT 'jco_results', count(*) FROM jco_results
 UNION ALL SELECT 'jco_details', count(*) FROM jco_details
 UNION ALL SELECT 'uptime', count(*) FROM uptime
 UNION ALL SELECT 'sld_systems', count(*) FROM sld_systems
+UNION ALL SELECT 'sld_hosts', count(*) FROM sld_hosts
 UNION ALL SELECT 'backups', count(*) FROM backups;

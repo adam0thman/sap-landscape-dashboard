@@ -129,6 +129,7 @@ def system_detail(sid):
         for r in cur.fetchall():
             lists.setdefault(r["check_name"], []).append(r["item"])
         sld = None
+        host_hw = None
         try:
             # sld_systems is keyed (sid, system_home): a SID may have >1 row
             # (e.g. prod + its copy/POC). Prefer the one whose host matches this
@@ -139,6 +140,10 @@ def system_detail(sid):
                                     sl.updated DESC
                            LIMIT 1""", (sid, sid))
             sld = cur.fetchone()
+            if sld and sld.get("fqdn"):   # Host Agent hardware/OS for this system's host
+                cur.execute("SELECT cpu_type, cpu_count, virt_info FROM sld_hosts WHERE fqdn=%s LIMIT 1",
+                            (sld["fqdn"],))
+                host_hw = cur.fetchone()
         except Exception:
             c.rollback()
             sld = None
@@ -157,6 +162,10 @@ def system_detail(sid):
         sld_out["appserver_list"] = json.loads(sld_out.get("appserver_list") or "[]")
         u = sld_out.get("updated")
         sld_out["updated"] = u.isoformat() if u else None
+        if host_hw:   # enrich with Host Agent hardware facts (CPU, hypervisor)
+            if host_hw.get("cpu_type"):
+                sld_out["cpu"] = host_hw["cpu_type"] + (" × %d" % host_hw["cpu_count"] if host_hw.get("cpu_count") else "")
+            sld_out["hypervisor"] = host_hw.get("virt_info")
     return {
         "sid": sid, "env": s["env"], "stype": s["stype"], "host": s["host"], "descr": s["descr"],
         "badge": b_txt, "color": b_col, "age": age, "resp": resp,
@@ -425,7 +434,7 @@ function landscape(s){
       ${kv('Product',s.product)}${kv('Release',s.sys_release)}${kv('System No.',s.sys_number)}${kv('SP stack',s.sp_stack)}
       ${kv('Database',[s.db_type,s.db_release,s.db_vendor].filter(Boolean).join(' · '))}${kv('DB host',s.db_host)}
       ${kv('Schema',s.db_schema)}${kv('TMS domain',s.tms_domain)}${kv('OS / kernel',[s.os,s.os_release].filter(Boolean).join(' '))}
-      ${kv('RAM',gb)}${kv('App servers',s.app_servers)}${kv('Clients',s.clients)}${kv('License expiry',fmtLic(s.license_exp))}${kv('FQDN',s.fqdn)}
+      ${kv('RAM',gb)}${kv('CPU',s.cpu)}${kv('Hypervisor',s.hypervisor)}${kv('App servers',s.app_servers)}${kv('Clients',s.clients)}${kv('License expiry',fmtLic(s.license_exp))}${kv('FQDN',s.fqdn)}
     </div>
     ${(s.components&&s.components.length)?`<div class="complist">${s.components.map(c=>`<span class="chip">${H(c.name)}<b>${H(c.version)}</b></span>`).join('')}</div>`:''}
   </div>`;

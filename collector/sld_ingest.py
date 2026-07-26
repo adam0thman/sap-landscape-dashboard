@@ -55,6 +55,15 @@ MIGRATE = [
     "ALTER TABLE sld_systems ADD PRIMARY KEY (sid, system_home)",
 ]
 
+# Host inventory from the SAP Host Agent (sldreg) — <sapdata type="ComputerSystem">.
+# Covers ANY host incl. bare-metal HANA DB hosts, without RFC/SSH. Keyed by host name.
+HDDL = """CREATE TABLE IF NOT EXISTS sld_hosts(
+ host text PRIMARY KEY, fqdn text, ip text,
+ cpu_type text, cpu_count int, cpu_rate int, ram_mb int, vram_mb int,
+ os text, os_release text, os_kernel text, os_bits int,
+ manufacturer text, machine_type text, virt_info text, hardware_id text, status text,
+ source_ip text, updated timestamptz DEFAULT now())"""
+
 # Optional allowlist: one entry per line, either 'SID' or 'SID@systemhost'. If the
 # file exists and is non-empty, only matching systems are STORED (everything is
 # still captured raw for inspection). Absent/empty = accept all known types.
@@ -121,15 +130,57 @@ def props(i):
     return d
 
 
+def _int(v):
+    return int(v) if isinstance(v, str) and v.isdigit() else None
+
+
+def store_host(cs, source_ip):
+    """Upsert a host row from a SAP_ComputerSystem instance (Host Agent payload)."""
+    host = cs.get("Name") or cs.get("FQDName")
+    if not host:
+        return None
+    row = dict(
+        host=host, fqdn=cs.get("FQDName"), ip=cs.get("IPAddress"),
+        cpu_type=cs.get("CPUType"), cpu_count=_int(cs.get("NumberOfCPUs")), cpu_rate=_int(cs.get("CPURate")),
+        ram_mb=_int(cs.get("PhysicalRAMInMB")), vram_mb=_int(cs.get("VirtualRAMInMB")),
+        os=cs.get("OpSys"), os_release=cs.get("OpSysReleaseName") or cs.get("OpSysDetails"),
+        os_kernel=cs.get("OpSysUname"), os_bits=_int(cs.get("OpSysBits")),
+        manufacturer=cs.get("Manufacturer"), machine_type=cs.get("MachineType"),
+        virt_info=cs.get("VirtProductInfo"), hardware_id=cs.get("HardwareId"), status=cs.get("Status"),
+        source_ip=source_ip)
+    cols = list(row.keys())
+    sets = ", ".join("%s=EXCLUDED.%s" % (k, k) for k in cols if k != "host")
+    sql = ("INSERT INTO sld_hosts(%s, updated) VALUES(%s, now()) "
+           "ON CONFLICT(host) DO UPDATE SET %s, updated=now()"
+           % (", ".join(cols), ", ".join(["%s"] * len(cols)), sets))
+    with db() as c, c.cursor() as cur:
+        cur.execute(HDDL)
+        cur.execute(sql, [row[k] for k in cols])
+        c.commit()
+    return host
+
+
 def parse_and_store(body, source_ip=None):
+    """Dispatch a <sapdata> payload: host inventory and/or ABAP system."""
     root = ET.fromstring(body)
     if root.tag != "sapdata":
         return None
     byc = {}
     for i in root.findall("instance"):
         byc.setdefault(i.get("classname"), []).append(i)
-    if not byc.get("SAP_BCSystem"):
-        return None  # not a system doc (e.g. generic/associations)
+    done = []
+    if byc.get("SAP_ComputerSystem"):                       # Host Agent (or the host inside a BCSystem doc)
+        h = store_host(props(byc["SAP_ComputerSystem"][0]), source_ip)
+        if h:
+            done.append("host:" + h)
+    if byc.get("SAP_BCSystem"):                             # ABAP system inventory
+        s = store_system(byc, source_ip)
+        if s:
+            done.append(s)
+    return " ".join(done) if done else None
+
+
+def store_system(byc, source_ip):
     b = props(byc["SAP_BCSystem"][0])
     sid = b.get("SAPSystemName")
     if not sid:
@@ -236,6 +287,7 @@ class H(BaseHTTPRequestHandler):
 def ensure_schema():
     with db() as c, c.cursor() as cur:
         cur.execute(DDL)
+        cur.execute(HDDL)
         c.commit()
         for stmt in MIGRATE:          # idempotent; each independent so one failing can't block the rest
             try:

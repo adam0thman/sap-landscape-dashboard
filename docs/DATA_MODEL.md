@@ -94,6 +94,16 @@ upserts known payload types, and supports an optional allowlist
 (`SLD_ALLOW_FILE`, lines of `SID` or `SID@host`) so stray/garbage senders are
 captured-only, never stored.
 
+### 6. `sld_hosts` — host hardware/OS inventory (1 row per host, keyed `host`)
+Populated from the **SAP Host Agent** (`sldreg`, `<sapdata type="ComputerSystem">`)
+— CPU, RAM, OS/kernel, hardware, hypervisor (e.g. the ESXi build). Covers **any**
+host including bare-metal DB hosts that RZ70/RFC can't reach. The ingest upserts
+this from any payload carrying a `SAP_ComputerSystem` instance. The webapp joins
+it to a system by FQDN to enrich the Landscape pane (CPU, hypervisor). Trigger a
+push from a host with:
+`saposcol -b | sldreg -host <sapmon> -port 50000 -user x -pass x -stdin -oldtransferdtd`
+(default HTTP; command-line args mean no `slddest.cfg`/config left behind).
+
 ### 6. `backups` — optional backup monitoring
 Latest row per `(sid, backup_type)`. Safe to leave empty.
 

@@ -110,6 +110,32 @@ CREATE TABLE IF NOT EXISTS sld_systems (
 );
 COMMENT ON TABLE sld_systems IS 'Per-system landscape inventory (release, DB, RAM, components...). Keyed (sid, system_home). components/appserver_list are JSON text.';
 
+
+-- Host inventory from the SAP Host Agent (sldreg, <sapdata type="ComputerSystem">).
+-- Covers ANY host including bare-metal DB hosts, no RFC/SSH needed. Keyed by host name.
+CREATE TABLE IF NOT EXISTS sld_hosts (
+    host          text PRIMARY KEY,   -- short hostname
+    fqdn          text,
+    ip            text,
+    cpu_type      text,               -- e.g. 'Intel(R) Xeon(R) Gold 6238R CPU @ 2.20GHz'
+    cpu_count     int,
+    cpu_rate      int,                -- MHz
+    ram_mb        int,                -- PhysicalRAMInMB
+    vram_mb       int,                -- VirtualRAMInMB
+    os            text,               -- e.g. 'LINUX_X86_64'
+    os_release    text,               -- e.g. 'SUSE Linux Enterprise Server 15 SP3'
+    os_kernel     text,               -- uname, e.g. '5.3.18-57-default'
+    os_bits       int,
+    manufacturer  text,               -- e.g. 'VMware, Inc.'
+    machine_type  text,               -- e.g. 'VMware7,1'
+    virt_info     text,               -- e.g. 'VMware ESX 7.0.3 build-24585291'
+    hardware_id   text,
+    status        text,
+    source_ip     text,
+    updated       timestamptz DEFAULT now()
+);
+COMMENT ON TABLE sld_hosts IS 'Per-host hardware/OS inventory from the SAP Host Agent (sldreg ComputerSystem payload).';
+
 -- ---------------------------------------------------------------------------
 -- backups — optional backup-monitoring rows (latest per sid/backup_type).
 -- Reserved for the backup pane; safe to leave empty.

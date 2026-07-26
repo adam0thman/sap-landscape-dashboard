@@ -1,22 +1,38 @@
 #!/usr/bin/env python3.9
-"""SLD data-supplier ingest for sapmon.
+"""SLD data-supplier ingest (capture-first).
 
-Listens on :50000 for RZ70 / ABAP+Java SLD Data Supplier pushes to /sld/ds,
-parses the CIM-ish <sapdata> document, and upserts a landscape-inventory row
-per SID into sld_systems. Parse-and-discard (no raw retained). Responds 200 so
-the sender is happy. Run:  systemd-run --unit=sld-ingest --collect python3.9 sld_ingest.py
-Replay a captured file:     python3.9 sld_ingest.py --replay <capturefile>
+Listens on :50000 for SLD Data Supplier pushes to /sld/ds from ANY source —
+RZ70 (ABAP), the JAVA supplier, HANA/hdblcm, the SAP Host Agent (sldreg), web
+dispatcher, etc. For every push it:
+  1. ARCHIVES the raw payload to CAP_DIR (last CAP_KEEP kept) and logs its
+     sapdata `type` + CIM-class inventory — so new/unknown system types can be
+     reverse-engineered from real samples before a parser exists for them;
+  2. parses the ABAP `type="BCSystem"` document into sld_systems (the one type
+     we understand today). Others are "captured-only" until we add their parser.
+Always responds 200. Run: systemd-run --unit=sld-ingest --collect python3.9 sld_ingest.py
+Replay a captured file:   python3.9 sld_ingest.py --replay <capturefile>
+Inspect captures:         ls -t $SLD_CAPTURE_DIR   (default /monitoring/sld_capture)
 """
 import os
+import re
 import sys
+import glob
 import json
 import datetime
+import collections
 import psycopg2
 import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else 50000
 PGPW = open("/monitoring/secrets/pg_grafana.pw").read().strip()
+
+# Capture-first: archive the raw payload + a class inventory for EVERY push, so
+# new system types (JAVA / dual-stack / HANA / DB / Host Agent / web dispatcher)
+# can be reverse-engineered from ground truth before we write their parsers.
+CAP_DIR = os.environ.get("SLD_CAPTURE_DIR", "/monitoring/sld_capture")
+CAP_KEEP = int(os.environ.get("SLD_CAPTURE_KEEP", "80"))   # bound disk: keep last N raw files
+os.makedirs(CAP_DIR, exist_ok=True)
 
 DDL = """CREATE TABLE IF NOT EXISTS sld_systems(
  sid text PRIMARY KEY, sys_release text, sys_number text, db_schema text, tms_domain text, license_exp text,
@@ -27,6 +43,46 @@ DDL = """CREATE TABLE IF NOT EXISTS sld_systems(
 
 def db():
     return psycopg2.connect(host="127.0.0.1", dbname="sapmon", user="grafana", password=PGPW)
+
+
+def classify(body):
+    """Best-effort inventory of a payload for reverse-engineering.
+    Returns (sapdata_type, {classname: count}, guessed_sid)."""
+    try:
+        root = ET.fromstring(body)
+    except Exception:
+        return ("unparseable", {}, None)
+    if root.tag != "sapdata":
+        return (root.tag, {}, None)
+    cc = collections.Counter(i.get("classname") for i in root.findall("instance"))
+    sid = None
+    for i in root.findall("instance"):
+        cn = i.get("classname") or ""
+        if cn in ("SAP_BCSystem", "SAP_J2EEEngineCluster", "SAP_XIDomain") or cn.endswith("System"):
+            for p in i.findall("property"):
+                if p.get("name") in ("SAPSystemName", "Name", "SystemName") and p.findtext("value"):
+                    sid = p.findtext("value")
+                    if p.get("name") == "SAPSystemName":
+                        break
+            if sid:
+                break
+    return (root.get("type") or "?", dict(cc), sid)
+
+
+def capture_raw(body, sapdata_type, sid):
+    """Archive one raw payload; prune to the last CAP_KEEP files."""
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", "%s_%s" % (sapdata_type or "unknown", sid or "na"))[:60]
+    fn = os.path.join(CAP_DIR, "req_%s_%s.xml" % (ts, safe))
+    with open(fn, "wb") as f:
+        f.write(body)
+    files = sorted(glob.glob(os.path.join(CAP_DIR, "req_*")), key=os.path.getmtime)
+    for old in files[:-CAP_KEEP]:
+        try:
+            os.remove(old)
+        except OSError:
+            pass
+    return fn
 
 
 def props(i):
@@ -110,13 +166,17 @@ class H(BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = self._read()
-        msg = "ignored"
+        sapdata_type, classes, sid = classify(body)
+        raw = capture_raw(body, sapdata_type, sid)              # always archive for reverse-engineering
         try:
-            sid = parse_and_store(body)
-            msg = "stored " + sid if sid else "no BCSystem doc"
+            stored = parse_and_store(body)
+            action = "stored " + stored if stored else "captured-only (no parser yet)"
         except Exception as x:
-            msg = "ERR " + str(x)[:150]
-        print(datetime.datetime.now().isoformat(), "POST", self.path, len(body), "bytes ->", msg, flush=True)
+            action = "ERR " + str(x)[:120]
+        top = ", ".join("%s×%d" % (k, v) for k, v in sorted(classes.items(), key=lambda kv: -kv[1])[:6])
+        print("%s POST %s %dB type=%s sid=%s -> %s | classes[%s] raw=%s"
+              % (datetime.datetime.now().isoformat(), self.path, len(body),
+                 sapdata_type, sid, action, top, os.path.basename(raw)), flush=True)
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
         self.end_headers()

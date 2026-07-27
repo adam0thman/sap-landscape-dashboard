@@ -140,10 +140,13 @@ def system_detail(sid):
                                     sl.updated DESC
                            LIMIT 1""", (sid, sid))
             sld = cur.fetchone()
-            if sld and sld.get("fqdn"):   # Host Agent hardware/OS for this system's host
-                cur.execute("SELECT cpu_type, cpu_count, virt_info FROM sld_hosts WHERE fqdn=%s LIMIT 1",
-                            (sld["fqdn"],))
-                host_hw = cur.fetchone()
+            # Host Agent hardware/OS for this system's host, matched by IP so it works
+            # for EVERY system even without an RZ70/sld_systems row.
+            cur.execute("""SELECT host,fqdn,ip,cpu_type,cpu_count,cpu_rate,ram_mb,os_release,os_kernel,
+                             virt_info,hardware_id,manufacturer,machine_type
+                           FROM sld_hosts WHERE ip=%s OR host=%s OR fqdn=%s LIMIT 1""",
+                        (s["host"], s["host"], (sld["fqdn"] if sld else s["host"])))
+            host_hw = cur.fetchone()
         except Exception:
             c.rollback()
             sld = None
@@ -184,6 +187,7 @@ def system_detail(sid):
         "lists": {k: rows_to_table(lists.get(k, []))
                   for k in ("JOBS_ABORTED", "DUMPS", "UPD_RECORDS", "LOCKS", "SAL", "STORAGE")},
         "sld": sld_out,
+        "host_hw": dict(host_hw) if host_hw else None,
     }
 
 
@@ -316,7 +320,7 @@ select.pill{color:var(--txt);cursor:pointer}
 .unit{color:var(--faint);font-size:11px;font-weight:400;margin-left:3px}
 .livec{width:100%;height:132px;display:block}
 .livelbl{position:absolute;left:16px;bottom:12px;color:var(--faint);font-size:10.5px;font-family:var(--mono)}
-.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px;grid-auto-flow:row dense;align-items:start}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px;grid-auto-flow:row dense;align-items:stretch}
 .pane{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:15px 17px;min-width:0}
 .pane h3{margin:0 0 12px;font-size:12px;letter-spacing:.8px;color:var(--dim);font-weight:600;display:flex;align-items:center}
 .pane h3 .src{margin-left:auto;color:var(--faint);font-weight:400;letter-spacing:0}
@@ -493,18 +497,29 @@ function storageBars(rows){
 }
 function kv(k,v){return v?`<div><div class="kvk">${H(k)}</div><div class="kvv">${H(v)}</div></div>`:'';}
 function fmtLic(d){return d&&d.length===8?(d==='99991231'?'never':d.slice(0,4)+'-'+d.slice(4,6)+'-'+d.slice(6,8)):(d||'');}
-function landscape(s,cls){
-  if(!s)return'';
-  const gb=s.ram_mb?Math.round(s.ram_mb/1024)+' GB':'';
-  return `<div class="pane ${cls||'b12'}"><h3>LANDSCAPE / INVENTORY<span class="src">SLD · RZ70${s.updated?' · '+fmtS(new Date(s.updated).getTime()):''}</span></h3>
-    <div class="kv">
-      ${kv('Product',s.product)}${kv('Release',s.sys_release)}${kv('System No.',s.sys_number)}${kv('SP stack',s.sp_stack)}
-      ${kv('Database',[s.db_type,s.db_release,s.db_vendor].filter(Boolean).join(' · '))}${kv('DB host',s.db_host)}
-      ${kv('Schema',s.db_schema)}${kv('TMS domain',s.tms_domain)}${kv('OS / kernel',[s.os,s.os_release].filter(Boolean).join(' '))}
-      ${kv('RAM',gb)}${kv('CPU',s.cpu)}${kv('Hypervisor',s.hypervisor)}${kv('App servers',s.app_servers)}${kv('Clients',s.clients)}${kv('License expiry',fmtLic(s.license_exp))}${kv('FQDN',s.fqdn)}
-    </div>
-    ${(s.components&&s.components.length)?`<div class="complist">${s.components.map(c=>`<span class="chip">${H(c.name)}<b>${H(c.version)}</b></span>`).join('')}</div>`:''}
-  </div>`;
+// Inventory tile shown for EVERY system: full landscape from SLD/RZ70 when present,
+// otherwise the host hardware/OS from the SAP Host Agent (matched by IP).
+function inventory(d,cls){
+  const s=d.sld, h=d.host_hw;
+  if(!s && !h) return '';
+  const cpu = (h&&h.cpu_type) ? H(h.cpu_type.replace('Intel(R) Xeon(R) ','Xeon ').replace(/ CPU @.*/,''))+(h.cpu_count?' × '+h.cpu_count:'') : '';
+  const ram = (h&&h.ram_mb) || (s&&s.ram_mb);
+  const os  = (h&&h.os_release) || (s&&s.os_release) || '';
+  const kernel = (h&&h.os_kernel) || '';
+  const hyp = h ? ((!h.virt_info||(''+h.virt_info).toLowerCase()==='none') ? 'bare-metal' : h.virt_info) : '';
+  const hw  = h ? [h.manufacturer,h.machine_type].filter(Boolean).join(' · ') : '';
+  const kvs=[];
+  if(s) kvs.push(kv('Product',s.product),kv('Release',s.sys_release),kv('System No.',s.sys_number),kv('SP stack',s.sp_stack),
+    kv('Database',[s.db_type,s.db_release,s.db_vendor].filter(Boolean).join(' · ')),kv('DB host',s.db_host),
+    kv('Schema',s.db_schema),kv('TMS domain',s.tms_domain),kv('App servers',s.app_servers),kv('Clients',s.clients),
+    kv('License expiry',fmtLic(s.license_exp)));
+  kvs.push(kv('Host',(h&&(h.host||h.fqdn))||(s&&s.fqdn)||d.host),kv('IP',h&&h.ip),
+    kv('OS / kernel',[os,kernel].filter(Boolean).join(' · ')),kv('RAM',ram?Math.round(ram/1024)+' GB':''),
+    kv('CPU',cpu),kv('Hypervisor',hyp),kv('Hardware',hw));
+  const comps = (s&&s.components&&s.components.length)?`<div class="complist">${s.components.map(c=>`<span class="chip">${H(c.name)}<b>${H(c.version)}</b></span>`).join('')}</div>`:'';
+  const src = s ? ('SLD · RZ70'+(s.updated?' · '+fmtS(new Date(s.updated).getTime()):'')) : 'SAP Host Agent';
+  return `<div class="pane ${cls||'b12'}"><h3>${s?'LANDSCAPE / INVENTORY':'HOST INVENTORY'}<span class="src">${src}</span></h3>
+    <div class="kv">${kvs.join('')}</div>${comps}</div>`;
 }
 
 /* ---- live auto-scrolling latency chart (canvas, rAF) ---- */
@@ -605,13 +620,13 @@ function panes_for(d,f,salOK){
   P.dumps=(cls)=>`<div class="pane ${cls}"><h3>SHORT DUMPS<span class="src">ST22</span></h3><div class="win">${winLabel('DUMPS',d.times.DUMPS)}</div>${tbl(['Time','User','Client','Host'],d.lists.DUMPS,'No dumps today.')}</div>`;
   P.updates=(cls)=>`<div class="pane ${cls}"><h3>STUCK UPDATES<span class="src">SM13</span></h3><div class="win">${winLabel('UPD_RECORDS',d.times.UPD_RECORDS)}</div>${tbl(['Update'],d.lists.UPD_RECORDS,'No pending update records.')}</div>`;
   P.sal=(cls)=>`<div class="pane ${cls}"><h3>SECURITY AUDIT LOG<span class="src">SM20 / SAL</span></h3><div class="win">${winLabel('SAL',d.times.SAL)}</div>${tbl(['Event'],d.lists.SAL,salOK?'No flagged audit events.':H(f.sal_text))}</div>`;
-  // bento composition per type — dense-packed, varied tile sizes
+  // bento composition per type — inventory is the full-width first box for every system
   if(d.stype==='ABAP')
-    return [P.live('b8'),P.findings('b4'),P.avail('b5'),P.storage('b4'),P.sal('b3'),
-            P.jobs('b6'),P.locks('b6'),P.dumps('b4'),P.updates('b4'),landscape(d.sld,'b12')].filter(Boolean);
+    return [inventory(d,'b12'),P.live('b8'),P.findings('b4'),P.avail('b5'),P.storage('b4'),P.sal('b3'),
+            P.jobs('b6'),P.locks('b6'),P.dumps('b4'),P.updates('b4')].filter(Boolean);
   if(d.stype==='JAVA'||d.stype==='BOBJ')
-    return [P.live('b8'),P.endpoint('b4'),P.avail('b4'),P.storage('b4'),landscape(d.sld,'b8')].filter(Boolean);
-  return [P.live('b8'),P.endpoint('b4'),P.avail('b8'),P.storage('b4'),landscape(d.sld,'b8')].filter(Boolean);  // WEBDISP / SAPROUTER
+    return [inventory(d,'b12'),P.live('b8'),P.endpoint('b4'),P.avail('b4'),P.storage('b4')].filter(Boolean);
+  return [inventory(d,'b12'),P.live('b8'),P.endpoint('b4'),P.avail('b8'),P.storage('b4')].filter(Boolean);  // WEBDISP / SAPROUTER
 }
 async function select(sid){
   SEL=sid;document.querySelectorAll('.card').forEach(c=>c.classList.toggle('sel',c.dataset.sid===sid));

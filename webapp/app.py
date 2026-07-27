@@ -312,16 +312,21 @@ select.pill{color:var(--txt);cursor:pointer}
 .btn:hover{border-color:#3a4150}
 .live{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px 8px;margin-bottom:14px;position:relative;overflow:hidden}
 .live h3{margin:0 0 4px;font-size:12px;letter-spacing:.8px;color:var(--dim);font-weight:600;display:flex;align-items:center;gap:8px}
-.live .now{margin-left:auto;font-family:var(--mono);font-size:22px;font-weight:700}
-.live .unit{color:var(--faint);font-size:11px;font-weight:400;margin-left:3px}
-.livec{width:100%;height:150px;display:block}
+.now{margin-left:auto;font-family:var(--mono);font-size:22px;font-weight:700}
+.unit{color:var(--faint);font-size:11px;font-weight:400;margin-left:3px}
+.livec{width:100%;height:132px;display:block}
 .livelbl{position:absolute;left:16px;bottom:12px;color:var(--faint);font-size:10.5px;font-family:var(--mono)}
-.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px;grid-auto-flow:row dense;align-items:start}
 .pane{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:15px 17px;min-width:0}
 .pane h3{margin:0 0 12px;font-size:12px;letter-spacing:.8px;color:var(--dim);font-weight:600;display:flex;align-items:center}
 .pane h3 .src{margin-left:auto;color:var(--faint);font-weight:400;letter-spacing:0}
 .col12{grid-column:span 12}.col7{grid-column:span 7}.col6{grid-column:span 6}.col5{grid-column:span 5}.col4{grid-column:span 4}
-@media(max-width:1100px){.col7,.col6,.col5,.col4{grid-column:span 12}}
+.b3{grid-column:span 3}.b4{grid-column:span 4}.b5{grid-column:span 5}.b6{grid-column:span 6}.b7{grid-column:span 7}.b8{grid-column:span 8}.b12{grid-column:span 12}
+.pane{transition:transform .13s ease,border-color .13s ease}
+.pane:hover{transform:translateY(-2px);border-color:#333c49}
+.pane.feature{position:relative;overflow:hidden;background:radial-gradient(130% 130% at 0 0,rgba(79,157,255,.07),transparent 55%),var(--panel)}
+.pane.feature::after{content:"";position:absolute;left:0;top:16px;bottom:16px;width:3px;border-radius:0 3px 3px 0;background:linear-gradient(180deg,#4f9dff,#7fb0ff)}
+@media(max-width:1100px){.col7,.col6,.col5,.col4,.b3,.b4,.b5,.b6,.b7,.b8{grid-column:span 12}}
 .fsrow{display:flex;align-items:center;gap:12px;padding:7px 0;border-bottom:1px solid #1e232a}
 .fsrow:last-child{border-bottom:none}
 .fsmount{font-family:var(--mono);font-size:12.5px;width:120px;flex-shrink:0;color:var(--txt)}
@@ -488,10 +493,10 @@ function storageBars(rows){
 }
 function kv(k,v){return v?`<div><div class="kvk">${H(k)}</div><div class="kvv">${H(v)}</div></div>`:'';}
 function fmtLic(d){return d&&d.length===8?(d==='99991231'?'never':d.slice(0,4)+'-'+d.slice(4,6)+'-'+d.slice(6,8)):(d||'');}
-function landscape(s){
+function landscape(s,cls){
   if(!s)return'';
   const gb=s.ram_mb?Math.round(s.ram_mb/1024)+' GB':'';
-  return `<div class="pane col12"><h3>LANDSCAPE / INVENTORY<span class="src">SLD · RZ70${s.updated?' · '+fmtS(new Date(s.updated).getTime()):''}</span></h3>
+  return `<div class="pane ${cls||'b12'}"><h3>LANDSCAPE / INVENTORY<span class="src">SLD · RZ70${s.updated?' · '+fmtS(new Date(s.updated).getTime()):''}</span></h3>
     <div class="kv">
       ${kv('Product',s.product)}${kv('Release',s.sys_release)}${kv('System No.',s.sys_number)}${kv('SP stack',s.sp_stack)}
       ${kv('Database',[s.db_type,s.db_release,s.db_vendor].filter(Boolean).join(' · '))}${kv('DB host',s.db_host)}
@@ -518,7 +523,7 @@ function startLive(sid){
   }
   probe();L.poll=setInterval(probe,2000);
   const ctx=cv.getContext('2d');
-  const tip=$('#livetip'),box=cv.closest('.live');let hoverX=null;
+  const tip=$('#livetip'),box=cv.closest('.pane')||cv.parentElement;let hoverX=null;
   cv.onmousemove=e=>{const r=cv.getBoundingClientRect();hoverX=e.clientX-r.left;
     const br=box.getBoundingClientRect();let tx=e.clientX-br.left+14;if(tx>br.width-100)tx=e.clientX-br.left-104;
     tip.style.left=Math.max(4,tx)+'px';tip.style.top=(e.clientY-br.top+12)+'px';};
@@ -570,39 +575,43 @@ function startLive(sid){
   draw();
 }
 
-// pane builders keyed by name; each type composes its own set
+// bento tiles — each takes a size class; per-type composition below
 function panes_for(d,f,salOK){
   const fN=(v,warn,crit)=>`<div class="finding"><div class="n" style="color:${v>=crit?'var(--red)':v>=warn?'var(--amber)':'var(--green)'}">${v}</div>`;
   const P={};
-  P.avail=(w)=>`<div class="pane col${w}" style="position:relative"><h3>AVAILABILITY &amp; RESPONSE (6h)<span class="src">${H(d.avail_detail)}</span></h3>
+  P.live=(cls)=>`<div class="pane ${cls} feature"><h3>LIVE LATENCY <span style="color:var(--faint);font-weight:400">· TCP · 2s · 90s</span><span class="now"><span id="livenow">…</span><span class="unit">ms</span></span></h3>
+      <canvas id="livec" class="livec"></canvas><div id="livetip" class="chart-tip" style="display:none"></div><div class="livelbl">now ←</div></div>`;
+  P.avail=(cls)=>`<div class="pane ${cls}" style="position:relative"><h3>AVAILABILITY &amp; RESPONSE (6h)<span class="src">${H(d.avail_detail)}</span></h3>
       ${d.trend.length?'<canvas id="trendc" class="trendc"></canvas><div id="trendtip" class="chart-tip" style="display:none"></div>':'<div class="empty">No probe history in window.</div>'}
       <div class="trend-foot"><span id="trendrange">${d.trend.length} probes</span><span>collector: ${d.resp==null?'n/a':d.resp+' ms'}</span></div></div>`;
-  P.endpoint=(w)=>`<div class="pane col${w}"><h3>SERVICE ENDPOINT<span class="src">${H(d.stype)}</span></h3>
+  P.endpoint=(cls)=>`<div class="pane ${cls}"><h3>SERVICE ENDPOINT<span class="src">${H(d.stype)}</span></h3>
       <div class="kv">
         <div><div class="kvk">Probe result</div><div class="kvv">${H(d.avail_detail)}</div></div>
-        <div><div class="kvk">Current latency</div><div class="kvv">${d.resp==null?'n/a':d.resp+' ms'}</div></div>
+        <div><div class="kvk">Latency</div><div class="kvv">${d.resp==null?'n/a':d.resp+' ms'}</div></div>
         <div><div class="kvk">Host</div><div class="kvv">${H(d.host)}</div></div>
-        <div><div class="kvk">Availability</div><div class="kvv">${d.color==='green'?'serving':d.color==='amber'?'transient':d.color==='red'?'down':'—'}</div></div>
+        <div><div class="kvk">State</div><div class="kvv">${d.color==='green'?'serving':d.color==='amber'?'transient':d.color==='red'?'down':'—'}</div></div>
       </div></div>`;
-  P.findings=(w)=>`<div class="pane col${w}"><h3>OPEN FINDINGS</h3>
-      <div class="win">⏱ collected ${d.collected?fmtS(d.collected):'—'}</div>
+  P.findings=(cls)=>`<div class="pane ${cls}"><h3>OPEN FINDINGS</h3><div class="win">⏱ ${d.collected?fmtS(d.collected):'—'}</div>
       <div class="findings">
       ${fN(f.jobs,1,50)}<div class="lb">Aborted jobs (24h)</div></div>
       ${fN(f.dumps,1,5)}<div class="lb">Short dumps (today)</div></div>
-      ${fN(f.updates,1,1)}<div class="lb">Stuck update records</div></div>
+      ${fN(f.updates,1,1)}<div class="lb">Stuck updates</div></div>
       ${fN(f.locks,999,9999)}<div class="lb">Lock entries</div></div></div>
       <div class="sal-note">SAL · ${salOK?'active':H(f.sal_text)}</div></div>`;
-  P.storage=()=>(d.lists.STORAGE&&d.lists.STORAGE.length)?`<div class="pane col12"><h3>STORAGE / FILESYSTEMS<span class="src">${H(d.host)} · df</span></h3>
+  P.storage=(cls)=>(d.lists.STORAGE&&d.lists.STORAGE.length)?`<div class="pane ${cls}"><h3>STORAGE<span class="src">${H(d.host)} · df</span></h3>
       <div class="win">${winLabel('STORAGE',d.times.STORAGE)}</div>${storageBars(d.lists.STORAGE)}</div>`:'';
-  P.landscape=()=>landscape(d.sld);
-  P.jobs=()=>`<div class="pane col6"><h3>FAILED / ABORTED JOBS<span class="src">SM37</span></h3><div class="win">${winLabel('JOBS_ABORTED',d.times.JOBS_ABORTED)}</div>${tbl(['Job','User','Start','End','Dur'],d.lists.JOBS_ABORTED,'No aborted jobs in the last 24h.')}</div>`;
-  P.locks=()=>`<div class="pane col6"><h3>LOCK ENTRIES<span class="src">SM12</span></h3><div class="win">${winLabel('LOCKS',d.times.LOCKS)}</div>${tbl(['User','Object','Client','Arg'],d.lists.LOCKS,'No lock entries held.')}</div>`;
-  P.dumps=()=>`<div class="pane col4"><h3>SHORT DUMPS<span class="src">ST22</span></h3><div class="win">${winLabel('DUMPS',d.times.DUMPS)}</div>${tbl(['Time','User','Client','Host'],d.lists.DUMPS,'No dumps today.')}</div>`;
-  P.updates=()=>`<div class="pane col4"><h3>STUCK UPDATES<span class="src">SM13</span></h3><div class="win">${winLabel('UPD_RECORDS',d.times.UPD_RECORDS)}</div>${tbl(['Update'],d.lists.UPD_RECORDS,'No pending update records.')}</div>`;
-  P.sal=()=>`<div class="pane col4"><h3>SECURITY AUDIT LOG<span class="src">SM20 / SAL</span></h3><div class="win">${winLabel('SAL',d.times.SAL)}</div>${tbl(['Event'],d.lists.SAL,salOK?'No flagged audit events.':H(f.sal_text))}</div>`;
-  if(d.stype==='ABAP') return [P.avail(7),P.findings(5),P.storage(),P.landscape(),P.jobs(),P.locks(),P.dumps(),P.updates(),P.sal()];
-  if(d.stype==='JAVA'||d.stype==='BOBJ') return [P.avail(8),P.endpoint(4),P.storage(),P.landscape()];
-  return [P.avail(8),P.endpoint(4),P.storage(),P.landscape()];   // WEBDISP / SAPROUTER / other
+  P.jobs=(cls)=>`<div class="pane ${cls}"><h3>FAILED / ABORTED JOBS<span class="src">SM37</span></h3><div class="win">${winLabel('JOBS_ABORTED',d.times.JOBS_ABORTED)}</div>${tbl(['Job','User','Start','End','Dur'],d.lists.JOBS_ABORTED,'No aborted jobs in the last 24h.')}</div>`;
+  P.locks=(cls)=>`<div class="pane ${cls}"><h3>LOCK ENTRIES<span class="src">SM12</span></h3><div class="win">${winLabel('LOCKS',d.times.LOCKS)}</div>${tbl(['User','Object','Client','Arg'],d.lists.LOCKS,'No lock entries held.')}</div>`;
+  P.dumps=(cls)=>`<div class="pane ${cls}"><h3>SHORT DUMPS<span class="src">ST22</span></h3><div class="win">${winLabel('DUMPS',d.times.DUMPS)}</div>${tbl(['Time','User','Client','Host'],d.lists.DUMPS,'No dumps today.')}</div>`;
+  P.updates=(cls)=>`<div class="pane ${cls}"><h3>STUCK UPDATES<span class="src">SM13</span></h3><div class="win">${winLabel('UPD_RECORDS',d.times.UPD_RECORDS)}</div>${tbl(['Update'],d.lists.UPD_RECORDS,'No pending update records.')}</div>`;
+  P.sal=(cls)=>`<div class="pane ${cls}"><h3>SECURITY AUDIT LOG<span class="src">SM20 / SAL</span></h3><div class="win">${winLabel('SAL',d.times.SAL)}</div>${tbl(['Event'],d.lists.SAL,salOK?'No flagged audit events.':H(f.sal_text))}</div>`;
+  // bento composition per type — dense-packed, varied tile sizes
+  if(d.stype==='ABAP')
+    return [P.live('b8'),P.findings('b4'),P.avail('b5'),P.storage('b4'),P.sal('b3'),
+            P.jobs('b6'),P.locks('b6'),P.dumps('b4'),P.updates('b4'),landscape(d.sld,'b12')].filter(Boolean);
+  if(d.stype==='JAVA'||d.stype==='BOBJ')
+    return [P.live('b8'),P.endpoint('b4'),P.avail('b4'),P.storage('b4'),landscape(d.sld,'b8')].filter(Boolean);
+  return [P.live('b8'),P.endpoint('b4'),P.avail('b8'),P.storage('b4'),landscape(d.sld,'b8')].filter(Boolean);  // WEBDISP / SAPROUTER
 }
 async function select(sid){
   SEL=sid;document.querySelectorAll('.card').forEach(c=>c.classList.toggle('sel',c.dataset.sid===sid));
@@ -613,9 +622,6 @@ async function select(sid){
         <div class="l2">${H(d.host)} · ${ENVL(d.env)} · last check ${ago(d.age)}</div>
         ${d.sld?`<div class="l3">${[d.sld.product,'rel '+(d.sld.sys_release||'?'),[d.sld.db_type,d.sld.db_release].filter(Boolean).join(' '),d.sld.ram_mb?Math.round(d.sld.ram_mb/1024)+' GB RAM':'',d.sld.os_release].filter(Boolean).map(H).join(' · ')}</div>`:''}</div>
       <div class="act"><button class="btn" onclick="select('${d.sid}')">↻ Re-check</button></div></div>
-    <div class="live"><h3>LIVE LATENCY · TCP PROBE <span style="color:var(--faint);font-weight:400">2s cadence · 90s window</span>
-        <span class="now"><span id="livenow">…</span><span class="unit">ms</span></span></h3>
-      <canvas id="livec" class="livec"></canvas><div id="livetip" class="chart-tip" style="display:none"></div><div class="livelbl">now ←</div></div>
     <div class="grid">${panes_for(d,f,salOK).join('')}</div>`;
   drawTrend(d.trend);
   startLive(sid);

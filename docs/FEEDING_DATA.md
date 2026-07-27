@@ -61,7 +61,23 @@ Config-driven by `systems.json`. For each ABAP system it opens an RFC connection
 | JOBS_ABORTED | `RFC_READ_TABLE` on `TBTCO` (status A, last 24h) |
 | UPD_RECORDS | `RFC_READ_TABLE` on `VBHDR` |
 | SAL | `RSAU_READ_LOG` (Security Audit Log; needs Basis ≥ 7.50) |
-| STORAGE | `ssh <host> df -PB1` (non-ABAP get a TCP-port probe for AVAIL) |
+| STORAGE | `ssh <host> df -PB1` |
+
+**Non-ABAP availability.** A system with `"type"` other than `ABAP` gets an
+availability probe instead of the RFC checks: if its `systems.json` entry has an
+**`"http_path"`** (e.g. NW Java / SAP PO — `{"type":"JAVA","port":54200,"http_path":"/pimon"}`)
+the collector does an **HTTP probe** where *any* HTTP response (2xx/3xx/4xx/5xx)
+counts as up and only a connection failure/timeout is down; otherwise it does a
+plain **TCP-connect** probe. Both are **debounced** — a single miss is recorded
+as *transient* (amber), and only **two consecutive** misses escalate to *down*
+(red), so a blip never shows a false "Down". Point the port/path at the system's
+real listener (a Java stack's HTTP port is `5<NN>00` for instance number `NN`,
+**not** always `50000`).
+
+**Per-type dashboard.** The webapp renders a **different detail template per
+`stype`**: ABAP shows the full ITSM panes (jobs/dumps/locks/updates/SAL), while
+JAVA/BOBJ/WEBDISP show availability + a service-endpoint pane + storage +
+landscape only (no ABAP-only checks). Card metrics are likewise type-scoped.
 
 Run it on a schedule (cron every 5 min). It reads DB + RFC passwords from files
 (`secrets/…`) — never hard-code credentials. Adapt the checks to your systems.

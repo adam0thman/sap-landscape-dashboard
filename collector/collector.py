@@ -1,7 +1,10 @@
 #!/usr/bin/env python3.9
-import os,json,socket,time,datetime,psycopg2,subprocess
+import os,json,socket,time,datetime,psycopg2,subprocess,urllib.request,urllib.error
 from pyrfc import Connection
 os.environ.setdefault('LD_LIBRARY_PATH','/monitoring/nwrfcsdk/lib')
+class _NoRedir(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self,*a,**k): return None   # don't chase redirects; a 3xx already means the stack answered
+HTTP_OPENER=urllib.request.build_opener(_NoRedir)
 CFG=json.load(open('/monitoring/etc/systems.json'))
 RFCPW=open('/monitoring/secrets/rfc.pw').read().strip()
 PGPW=open('/monitoring/secrets/pg_grafana.pw').read().strip()
@@ -66,11 +69,23 @@ for s in CFG['systems']:
         except Exception as x:
             up(e,sid,0,0,0); rec(e,sid,'AVAIL',2,'connect fail: '+str(x)[:80]); det(e,sid,'AVAIL',str(x)[:200])
     else:
-        port=s.get('port',0); t0=time.time(); reach=0
-        try: socket.create_connection((s['host'],port),timeout=5).close(); reach=1
-        except Exception: reach=0
-        ms=int((time.time()-t0)*1000); up(e,sid,reach,0,ms if reach else 0); rec(e,sid,'AVAIL',0 if reach else 2,'%s %s:%d %s'%(typ,s['host'],port,'open' if reach else 'closed'))
-        det(e,sid,'AVAIL','%s probe %s:%d = %s'%(typ,s['host'],port,'OPEN' if reach else 'CLOSED'))
+        host=s['host']; port=s.get('port',0); path=s.get('http_path'); t0=time.time(); up_now=0
+        if path is not None:   # HTTP health probe (NW Java etc.): ANY HTTP answer = web stack serving
+            try:
+                HTTP_OPENER.open('http://%s:%d%s'%(host,port,path),timeout=6); up_now=1; d='HTTP %s:%d%s ok'%(host,port,path)
+            except urllib.error.HTTPError as he: up_now=1; d='HTTP %s:%d%s -> %d'%(host,port,path,he.code)
+            except Exception as x: up_now=0; d='%s:%d%s unreachable: %s'%(host,port,path,str(x)[:45])
+        else:                  # plain TCP for non-HTTP endpoints (BOBJ, WebDisp...)
+            try: socket.create_connection((host,port),timeout=5).close(); up_now=1; d='%s %s:%d open'%(typ,host,port)
+            except Exception: up_now=0; d='%s %s:%d closed'%(typ,host,port)
+        ms=int((time.time()-t0)*1000)
+        st=0
+        if not up_now:         # debounce: single miss = YELLOW (transient); RED only if the prior probe was also down
+            cur.execute("SELECT status FROM jco_results WHERE sid=%s AND check_name='AVAIL' ORDER BY ts DESC LIMIT 1",(sid,))
+            r=cur.fetchone(); st=2 if (r and r[0] in (1,2)) else 1
+        up(e,sid,up_now,0,ms if up_now else 0)
+        rec(e,sid,'AVAIL',st,d+('' if up_now else (' [transient]' if st==1 else ' [down]')))
+        det(e,sid,'AVAIL',d)
     # --- STORAGE: filesystem utilisation via bfisapadmin SSH (df) ---
     try:
         st=subprocess.run(['ssh','-o','BatchMode=yes','-o','ConnectTimeout=6','bfisapadmin@'+s['host'],'df -PB1'],

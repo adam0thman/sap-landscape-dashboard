@@ -290,7 +290,18 @@ select.pill{color:var(--txt);cursor:pointer}
 .card .m{flex:1}.card .m .v{font-family:var(--mono);font-size:15px;font-weight:600}
 .card .m .k{color:var(--faint);font-size:9.5px;letter-spacing:.5px;margin-top:3px}
 .v.red{color:var(--red)}.v.amber{color:var(--amber)}.v.green{color:var(--green)}.v.dim{color:var(--dim)}
-.detail{padding:2px 22px 40px}
+.tchip{font-size:9px;font-weight:700;letter-spacing:.7px;padding:2px 6px;border-radius:4px;border:1px solid;
+ vertical-align:middle;text-transform:uppercase;background:rgba(255,255,255,.02)}
+/* clear break between the system rail (list) and the detail panel */
+.railsep{position:relative;height:1px;margin:20px 22px 0;
+ background:linear-gradient(90deg,transparent,var(--line) 6%,var(--line) 94%,transparent)}
+.railsep-chip{position:absolute;left:50%;top:-3px;transform:translateX(-50%);width:54px;height:5px;border-radius:3px;
+ background:linear-gradient(90deg,#f2b705,#ff7a00);box-shadow:0 0 14px rgba(255,122,0,.5)}
+.detail{position:relative;margin-top:18px;padding:24px 22px 44px;
+ background:radial-gradient(120% 260px at 50% 0,rgba(255,255,255,.028),transparent 70%);
+ border-top:1px solid transparent}
+.detail::before{content:"";position:absolute;left:22px;right:22px;top:0;height:1px;
+ background:linear-gradient(90deg,transparent,rgba(255,255,255,.05),transparent)}
 .hero{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 20px;display:flex;align-items:center;gap:16px;margin-bottom:14px;border-left:4px solid var(--grey)}
 .hero.red{border-left-color:var(--red)}.hero.amber{border-left-color:var(--amber)}.hero.green{border-left-color:var(--green)}.hero.grey{border-left-color:var(--grey)}
 .hero .sid{font-family:var(--mono);font-size:30px;font-weight:700}
@@ -358,6 +369,7 @@ tr:last-child td{border-bottom:none}td.k{color:var(--txt)}
     <span><i class="d-amber"></i>Warning <b id="lc-amber">0</b></span>
     <span><i class="d-green"></i>Healthy <b id="lc-green">0</b></span></div></div>
 <div class="strip" id="strip"></div>
+<div class="railsep"><span class="railsep-chip"></span></div>
 <div class="detail" id="detail"></div>
 </div>
 <div id="hostsview" class="hidden"></div>
@@ -369,23 +381,25 @@ let SEL=null,OV=null,LIVE=null;
 function ago(s){if(s==null)return'—';if(s<60)return s+'s ago';if(s<3600)return Math.floor(s/60)+'m ago';return Math.floor(s/3600)+'h ago';}
 function latColor(ms,up){if(!up||ms==null)return'var(--red)';if(ms<300)return'var(--green)';if(ms<800)return'var(--amber)';return'var(--red)';}
 
+// which health metrics matter per system type (ABAP-only checks are hidden elsewhere)
+const TYPEMETRICS={ABAP:['avail','resp','jobs','fs','sal'],JAVA:['avail','resp','fs'],
+  BOBJ:['avail','resp','fs'],WEBDISP:['avail','resp'],SAPROUTER:['avail','resp']};
+const TYPECOLOR={ABAP:'#5b9dff',JAVA:'#b98bff',BOBJ:'#42c9c9',WEBDISP:'#8b93a1',SAPROUTER:'#ff9830'};
+function typechip(t){const c=TYPECOLOR[t]||'#8b93a1';return `<span class="tchip" style="color:${c};border-color:${c}66">${H(t||'?')}</span>`;}
 function card(o){
-  const mv=(v,c)=>`<div class="m"><div class="v ${c||'dim'}">${v}</div>`;
+  const mv=(v,c,k)=>`<div class="m"><div class="v ${c||'dim'}">${v}</div><div class="k">${k}</div></div>`;
   const availC=o.avail==='UP'?'green':(o.avail==='DOWN'?'red':'dim');
   const jobsC=o.jobs==null?'dim':(o.jobs>50?'red':o.jobs>0?'amber':'green');
   const salC=o.sal_status===0?'green':o.sal_status==null?'dim':'amber';
   const fsC=o.fs==null?'dim':(o.fs>=90?'red':o.fs>=80?'amber':'green');
-  const resp=o.resp==null?'n/a':o.resp+'ms';
+  const M={avail:mv(o.avail,availC,'AVAIL'),resp:mv(o.resp==null?'n/a':o.resp+'ms','dim','RESP'),
+    jobs:mv(o.jobs==null?'—':o.jobs,jobsC,'JOBS✗'),fs:mv(o.fs==null?'—':o.fs+'%',fsC,'FS'),
+    sal:mv(o.sal_status==null?'—':(o.sal_status===0?'OK':'!'),salC,'SAL')};
+  const keys=TYPEMETRICS[o.stype]||['avail','resp','fs'];
   return `<div class="card ${o.color} ${SEL===o.sid?'sel':''}" data-sid="${o.sid}">
     <div class="top"><span class="sid">${H(o.sid)}</span><span class="tag ${o.color}">${o.badge}</span><span class="dot d-${o.color}"></span></div>
-    <div class="desc">${H(o.descr)} <b>· ${H(o.stype)}</b></div>
-    <div class="mrow">
-      ${mv(o.avail,availC)}<div class="k">AVAIL</div></div>
-      ${mv(resp,'dim')}<div class="k">RESP</div></div>
-      ${mv(o.jobs==null?'—':o.jobs,jobsC)}<div class="k">JOBS✗</div></div>
-      ${mv(o.fs==null?'—':o.fs+'%',fsC)}<div class="k">FS</div></div>
-      ${mv(o.sal_status==null?'—':(o.sal_status===0?'OK':'!'),salC)}<div class="k">SAL</div></div>
-    </div></div>`;
+    <div class="desc">${H(o.descr)} ${typechip(o.stype)}</div>
+    <div class="mrow">${keys.map(k=>M[k]).join('')}</div></div>`;
 }
 function renderStrip(){
   const env=$('#envf').value, sys=OV.systems.filter(o=>!env||o.env===env);
@@ -556,51 +570,53 @@ function startLive(sid){
   draw();
 }
 
+// pane builders keyed by name; each type composes its own set
+function panes_for(d,f,salOK){
+  const fN=(v,warn,crit)=>`<div class="finding"><div class="n" style="color:${v>=crit?'var(--red)':v>=warn?'var(--amber)':'var(--green)'}">${v}</div>`;
+  const P={};
+  P.avail=(w)=>`<div class="pane col${w}" style="position:relative"><h3>AVAILABILITY &amp; RESPONSE (6h)<span class="src">${H(d.avail_detail)}</span></h3>
+      ${d.trend.length?'<canvas id="trendc" class="trendc"></canvas><div id="trendtip" class="chart-tip" style="display:none"></div>':'<div class="empty">No probe history in window.</div>'}
+      <div class="trend-foot"><span id="trendrange">${d.trend.length} probes</span><span>collector: ${d.resp==null?'n/a':d.resp+' ms'}</span></div></div>`;
+  P.endpoint=(w)=>`<div class="pane col${w}"><h3>SERVICE ENDPOINT<span class="src">${H(d.stype)}</span></h3>
+      <div class="kv">
+        <div><div class="kvk">Probe result</div><div class="kvv">${H(d.avail_detail)}</div></div>
+        <div><div class="kvk">Current latency</div><div class="kvv">${d.resp==null?'n/a':d.resp+' ms'}</div></div>
+        <div><div class="kvk">Host</div><div class="kvv">${H(d.host)}</div></div>
+        <div><div class="kvk">Availability</div><div class="kvv">${d.color==='green'?'serving':d.color==='amber'?'transient':d.color==='red'?'down':'—'}</div></div>
+      </div></div>`;
+  P.findings=(w)=>`<div class="pane col${w}"><h3>OPEN FINDINGS</h3>
+      <div class="win">⏱ collected ${d.collected?fmtS(d.collected):'—'}</div>
+      <div class="findings">
+      ${fN(f.jobs,1,50)}<div class="lb">Aborted jobs (24h)</div></div>
+      ${fN(f.dumps,1,5)}<div class="lb">Short dumps (today)</div></div>
+      ${fN(f.updates,1,1)}<div class="lb">Stuck update records</div></div>
+      ${fN(f.locks,999,9999)}<div class="lb">Lock entries</div></div></div>
+      <div class="sal-note">SAL · ${salOK?'active':H(f.sal_text)}</div></div>`;
+  P.storage=()=>(d.lists.STORAGE&&d.lists.STORAGE.length)?`<div class="pane col12"><h3>STORAGE / FILESYSTEMS<span class="src">${H(d.host)} · df</span></h3>
+      <div class="win">${winLabel('STORAGE',d.times.STORAGE)}</div>${storageBars(d.lists.STORAGE)}</div>`:'';
+  P.landscape=()=>landscape(d.sld);
+  P.jobs=()=>`<div class="pane col6"><h3>FAILED / ABORTED JOBS<span class="src">SM37</span></h3><div class="win">${winLabel('JOBS_ABORTED',d.times.JOBS_ABORTED)}</div>${tbl(['Job','User','Start','End','Dur'],d.lists.JOBS_ABORTED,'No aborted jobs in the last 24h.')}</div>`;
+  P.locks=()=>`<div class="pane col6"><h3>LOCK ENTRIES<span class="src">SM12</span></h3><div class="win">${winLabel('LOCKS',d.times.LOCKS)}</div>${tbl(['User','Object','Client','Arg'],d.lists.LOCKS,'No lock entries held.')}</div>`;
+  P.dumps=()=>`<div class="pane col4"><h3>SHORT DUMPS<span class="src">ST22</span></h3><div class="win">${winLabel('DUMPS',d.times.DUMPS)}</div>${tbl(['Time','User','Client','Host'],d.lists.DUMPS,'No dumps today.')}</div>`;
+  P.updates=()=>`<div class="pane col4"><h3>STUCK UPDATES<span class="src">SM13</span></h3><div class="win">${winLabel('UPD_RECORDS',d.times.UPD_RECORDS)}</div>${tbl(['Update'],d.lists.UPD_RECORDS,'No pending update records.')}</div>`;
+  P.sal=()=>`<div class="pane col4"><h3>SECURITY AUDIT LOG<span class="src">SM20 / SAL</span></h3><div class="win">${winLabel('SAL',d.times.SAL)}</div>${tbl(['Event'],d.lists.SAL,salOK?'No flagged audit events.':H(f.sal_text))}</div>`;
+  if(d.stype==='ABAP') return [P.avail(7),P.findings(5),P.storage(),P.landscape(),P.jobs(),P.locks(),P.dumps(),P.updates(),P.sal()];
+  if(d.stype==='JAVA'||d.stype==='BOBJ') return [P.avail(8),P.endpoint(4),P.storage(),P.landscape()];
+  return [P.avail(8),P.endpoint(4),P.storage(),P.landscape()];   // WEBDISP / SAPROUTER / other
+}
 async function select(sid){
   SEL=sid;document.querySelectorAll('.card').forEach(c=>c.classList.toggle('sel',c.dataset.sid===sid));
   const d=await(await fetch('/api/system/'+sid)).json(),f=d.findings,salOK=f.sal_status===0;
-  const fN=(v,warn,crit)=>`<div class="finding"><div class="n" style="color:${v>=crit?'var(--red)':v>=warn?'var(--amber)':'var(--green)'}">${v}</div>`;
   $('#detail').innerHTML=`
     <div class="hero ${d.color}"><span class="sid">${H(d.sid)}</span>
-      <div class="meta"><b>${H(d.descr)}</b> · <span class="tag ${d.color}">${d.badge}</span>
-        <div class="l2">${H(d.host)} · ${H(d.stype)} · ${ENVL(d.env)} · last check ${ago(d.age)}</div>
+      <div class="meta"><b>${H(d.descr)}</b> · <span class="tag ${d.color}">${d.badge}</span> ${typechip(d.stype)}
+        <div class="l2">${H(d.host)} · ${ENVL(d.env)} · last check ${ago(d.age)}</div>
         ${d.sld?`<div class="l3">${[d.sld.product,'rel '+(d.sld.sys_release||'?'),[d.sld.db_type,d.sld.db_release].filter(Boolean).join(' '),d.sld.ram_mb?Math.round(d.sld.ram_mb/1024)+' GB RAM':'',d.sld.os_release].filter(Boolean).map(H).join(' · ')}</div>`:''}</div>
       <div class="act"><button class="btn" onclick="select('${d.sid}')">↻ Re-check</button></div></div>
     <div class="live"><h3>LIVE LATENCY · TCP PROBE <span style="color:var(--faint);font-weight:400">2s cadence · 90s window</span>
         <span class="now"><span id="livenow">…</span><span class="unit">ms</span></span></h3>
       <canvas id="livec" class="livec"></canvas><div id="livetip" class="chart-tip" style="display:none"></div><div class="livelbl">now ←</div></div>
-    <div class="grid">
-      <div class="pane col7" style="position:relative"><h3>AVAILABILITY &amp; RESPONSE (6h)<span class="src">${H(d.avail_detail)}</span></h3>
-        ${d.trend.length?'<canvas id="trendc" class="trendc"></canvas><div id="trendtip" class="chart-tip" style="display:none"></div>':'<div class="empty">No probe history in window.</div>'}
-        <div class="trend-foot"><span id="trendrange">${d.trend.length} probes</span><span>collector: ${d.resp==null?'n/a':d.resp+' ms'}</span></div></div>
-      <div class="pane col5"><h3>OPEN FINDINGS</h3>
-        <div class="win">⏱ collected ${d.collected?fmtS(d.collected):'—'}</div>
-        <div class="findings">
-        ${fN(f.jobs,1,50)}<div class="lb">Aborted jobs (24h)</div></div>
-        ${fN(f.dumps,1,5)}<div class="lb">Short dumps (today)</div></div>
-        ${fN(f.updates,1,1)}<div class="lb">Stuck update records</div></div>
-        ${fN(f.locks,999,9999)}<div class="lb">Lock entries</div></div></div>
-        <div class="sal-note">SAL · ${salOK?'active':H(f.sal_text)}</div></div>
-      <div class="pane col12"><h3>STORAGE / FILESYSTEMS<span class="src">${H(d.host)} · df</span></h3>
-        <div class="win">${winLabel('STORAGE',d.times.STORAGE)}</div>
-        ${storageBars(d.lists.STORAGE)}</div>
-      ${landscape(d.sld)}
-      <div class="pane col6"><h3>FAILED / ABORTED JOBS<span class="src">SM37</span></h3>
-        <div class="win">${winLabel('JOBS_ABORTED',d.times.JOBS_ABORTED)}</div>
-        ${tbl(['Job','User','Start','End','Dur'],d.lists.JOBS_ABORTED,'No aborted jobs in the last 24h.')}</div>
-      <div class="pane col6"><h3>LOCK ENTRIES<span class="src">SM12</span></h3>
-        <div class="win">${winLabel('LOCKS',d.times.LOCKS)}</div>
-        ${tbl(['User','Object','Client','Arg'],d.lists.LOCKS,'No lock entries held.')}</div>
-      <div class="pane col4"><h3>SHORT DUMPS<span class="src">ST22</span></h3>
-        <div class="win">${winLabel('DUMPS',d.times.DUMPS)}</div>
-        ${tbl(['Time','User','Client','Host'],d.lists.DUMPS,'No dumps today.')}</div>
-      <div class="pane col4"><h3>STUCK UPDATES<span class="src">SM13</span></h3>
-        <div class="win">${winLabel('UPD_RECORDS',d.times.UPD_RECORDS)}</div>
-        ${tbl(['Update'],d.lists.UPD_RECORDS,'No pending update records.')}</div>
-      <div class="pane col4"><h3>SECURITY AUDIT LOG<span class="src">SM20 / SAL</span></h3>
-        <div class="win">${winLabel('SAL',d.times.SAL)}</div>
-        ${tbl(['Event'],d.lists.SAL,salOK?'No flagged audit events.':H(f.sal_text))}</div>
-    </div>`;
+    <div class="grid">${panes_for(d,f,salOK).join('')}</div>`;
   drawTrend(d.trend);
   startLive(sid);
 }
